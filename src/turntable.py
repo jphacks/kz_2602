@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Sequence
+from typing import Protocol, Sequence
 
 import cv2
 import numpy as np
@@ -16,6 +16,12 @@ class TurntableCalibrationError(ValueError):
 
 class TurntableDetectionError(TurntableCalibrationError):
     """Raised when a turntable contour cannot be detected."""
+
+
+class ObstacleMaskDetectorProtocol(Protocol):
+    """Minimal detector contract used by the turntable image pipeline."""
+
+    def predict(self, image: np.ndarray) -> np.ndarray: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +142,9 @@ def fit_ellipse_from_image(image: np.ndarray) -> EllipseParameters:
     if image_array.ndim == 2:
         grayscale = image_array
     elif image_array.ndim == 3 and image_array.shape[2] in (3, 4):
-        conversion = cv2.COLOR_BGR2GRAY if image_array.shape[2] == 3 else cv2.COLOR_BGRA2GRAY
+        conversion = (
+            cv2.COLOR_BGR2GRAY if image_array.shape[2] == 3 else cv2.COLOR_BGRA2GRAY
+        )
         grayscale = cv2.cvtColor(image_array, conversion)
     else:
         raise TurntableDetectionError("image must be grayscale, BGR, or BGRA")
@@ -150,3 +158,108 @@ def fit_ellipse_from_image(image: np.ndarray) -> EllipseParameters:
 
     contour = max(candidates, key=cv2.contourArea)
     return fit_ellipse(contour)
+
+
+def fit_ellipse_from_image_with_obstacles(
+    image: np.ndarray, obstacle_mask: np.ndarray
+) -> EllipseParameters:
+    """Fit a horizontally aligned turntable ellipse after obstacle removal."""
+    image_array = np.asarray(image)
+    if image_array.size == 0:
+        raise TurntableDetectionError("image must not be empty")
+    if image_array.ndim == 2:
+        grayscale = image_array
+    elif image_array.ndim == 3 and image_array.shape[2] in (3, 4):
+        conversion = (
+            cv2.COLOR_BGR2GRAY if image_array.shape[2] == 3 else cv2.COLOR_BGRA2GRAY
+        )
+        grayscale = cv2.cvtColor(image_array, conversion)
+    else:
+        raise TurntableDetectionError("image must be grayscale, BGR, or BGRA")
+
+    mask_array = np.asarray(obstacle_mask)
+    if mask_array.ndim != 2 or mask_array.shape != grayscale.shape:
+        raise TurntableDetectionError("obstacle_mask must match the image dimensions")
+
+    height, width = grayscale.shape
+    roi_y_start = int(height * 0.40)
+    roi_y_end = int(height * 0.78)
+    if roi_y_end <= roi_y_start:
+        raise TurntableDetectionError("image is too small for the turntable ROI")
+
+    roi = grayscale[roi_y_start:roi_y_end, :]
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    equalized = clahe.apply(roi)
+    blurred = cv2.GaussianBlur(equalized, (5, 5), 0)
+    thresholded = cv2.adaptiveThreshold(
+        blurred,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        3,
+    )
+
+    kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cleaned = cv2.morphologyEx(thresholded, cv2.MORPH_OPEN, kernel_clean)
+    lines = cv2.HoughLinesP(
+        cleaned,
+        1,
+        np.pi / 180.0,
+        threshold=80,
+        minLineLength=50,
+        maxLineGap=10,
+    )
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line.ravel()
+            cv2.line(cleaned, (int(x1), int(y1)), (int(x2), int(y2)), 0, 5)
+
+    cleaned_full = np.zeros((height, width), dtype=np.uint8)
+    cleaned_full[roi_y_start:roi_y_end, :] = cleaned
+    dilated_obstacles = cv2.dilate(
+        np.where(mask_array > 0, 255, 0).astype(np.uint8),
+        np.ones((15, 15), dtype=np.uint8),
+        iterations=1,
+    )
+    candidate_mask = cleaned_full.copy()
+    candidate_mask[dilated_obstacles > 0] = 0
+    candidate_mask[:, : int(width * 0.12)] = 0
+    candidate_mask[:, int(width * 0.88) :] = 0
+
+    y_points, x_points = np.where(candidate_mask > 0)
+    if len(x_points) <= 50:
+        raise TurntableDetectionError("not enough points for turntable fitting")
+
+    distance = np.abs(x_points - width / 2.0)
+    valid = (distance > width * 0.10) & (distance < width * 0.42)
+    points = np.column_stack((x_points[valid], y_points[valid])).astype(np.float32)
+    if len(points) <= 20:
+        raise TurntableDetectionError(
+            "not enough filtered points for turntable fitting"
+        )
+
+    try:
+        (center_x, center_y), (axis_a, axis_b), _ = cv2.fitEllipseDirect(
+            points.reshape(-1, 1, 2)
+        )
+    except cv2.error as error:
+        raise TurntableDetectionError(
+            "could not fit the filtered turntable ellipse"
+        ) from error
+
+    major_axis, minor_axis = sorted((float(axis_a), float(axis_b)), reverse=True)
+    if (
+        not math.isfinite(center_y)
+        or not math.isfinite(major_axis)
+        or not math.isfinite(minor_axis)
+        or major_axis <= 0
+        or minor_axis <= 0
+    ):
+        raise TurntableDetectionError("filtered ellipse parameters are invalid")
+    return EllipseParameters(
+        center_px=(width / 2.0, float(center_y)),
+        major_axis_px=major_axis,
+        minor_axis_px=minor_axis,
+        angle_deg=0.0,
+    )

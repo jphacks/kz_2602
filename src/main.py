@@ -16,6 +16,7 @@ from depth_anything import DepthAnythingV2SmallEstimator
 from food_segmentation import FoodSegmenter
 from model_manager import ensure_model_file, ensure_onnx_model_file
 from pipeline import PipelineError, PipelineResult, run_pipeline
+from turntable_obstacle import YoloObstacleDetector
 
 DEFAULT_DEPTH_MODEL_URL = (
     "https://huggingface.co/onnx-community/depth-anything-v2-small-ONNX/"
@@ -25,6 +26,7 @@ DEFAULT_DEPTH_EXTERNAL_DATA_URL = (
     "https://huggingface.co/onnx-community/depth-anything-v2-small-ONNX/"
     "resolve/main/onnx/model.onnx_data?download=true"
 )
+DEFAULT_OBSTACLE_MODEL_PATH = "models/yolov8n-seg.onnx"
 SUPPORTED_FOOD_CLASSES = frozenset({"rice", "meat", "vegetable", "bread", "bowl"})
 COCO_CLASS_NAMES = (
     "person",
@@ -214,6 +216,39 @@ def create_depth_estimator(config: Mapping[str, Any]) -> DepthAnythingV2SmallEst
     )
 
 
+def create_obstacle_detector(config: Mapping[str, Any]) -> YoloObstacleDetector:
+    """Build a YOLOv8 segmentation adapter for obstacle masks."""
+    model_path = config.get("model_path", DEFAULT_OBSTACLE_MODEL_PATH)
+    if not isinstance(model_path, str) or not model_path:
+        raise ValueError("model_path must be a non-empty string")
+    input_size = config.get("input_size", [640, 640])
+    if (
+        not isinstance(input_size, Sequence)
+        or isinstance(input_size, (str, bytes))
+        or len(input_size) != 2
+        or not all(
+            isinstance(size, int) and not isinstance(size, bool) and size > 0
+            for size in input_size
+        )
+    ):
+        raise ValueError("input_size must contain two positive integers")
+
+    cached_model_path = ensure_model_file(
+        model_path,
+        config.get("model_url"),
+        config.get("model_sha256"),
+        config.get("model_pt_path"),
+        config.get("model_pt_url"),
+        config.get("model_pt_sha256"),
+        (input_size[0], input_size[1]),
+    )
+    return YoloObstacleDetector(
+        cached_model_path,
+        confidence_threshold=config.get("confidence_threshold", 0.25),
+        iou_threshold=config.get("iou_threshold", 0.45),
+    )
+
+
 def pipeline_result_to_dict(result: PipelineResult) -> dict[str, Any]:
     """Convert a pipeline result into JSON-serializable builtin values."""
     return {
@@ -298,9 +333,15 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--depth-external-data-url")
     parser.add_argument("--depth-external-data-sha256")
     parser.add_argument(
-        "--turntable-mask",
-        help="Optional grayscale mask image; non-zero pixels define the turntable",
+        "--obstacle-model",
+        default=DEFAULT_OBSTACLE_MODEL_PATH,
+        help="YOLOv8 segmentation ONNX path for turntable obstacles",
     )
+    parser.add_argument("--obstacle-model-url")
+    parser.add_argument("--obstacle-model-sha256")
+    parser.add_argument("--obstacle-model-pt")
+    parser.add_argument("--obstacle-model-pt-url")
+    parser.add_argument("--obstacle-model-pt-sha256")
     parser.add_argument("--output", help="Optional JSON output path; stdout by default")
     return parser
 
@@ -310,18 +351,6 @@ def _read_rgb_image(image_path: str) -> np.ndarray:
     if image_bgr is None:
         raise ValueError(f"could not read image: {image_path}")
     return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-
-
-def _read_turntable_mask(mask_path: str, image_shape: tuple[int, int]) -> np.ndarray:
-    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        raise ValueError(f"could not read turntable mask: {mask_path}")
-    if mask.shape != image_shape:
-        raise ValueError(
-            "turntable mask dimensions must match the input image "
-            f"({image_shape[1]}x{image_shape[0]})"
-        )
-    return mask > 0
 
 
 def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
@@ -345,11 +374,6 @@ def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("class-names must not contain duplicates")
 
     image_rgb = _read_rgb_image(args.image)
-    turntable_mask = (
-        _read_turntable_mask(args.turntable_mask, image_rgb.shape[:2])
-        if args.turntable_mask
-        else None
-    )
     segmenter = create_food_segmenter(
         {
             "model_path": args.yolo_model,
@@ -373,12 +397,22 @@ def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
             "external_data_sha256": args.depth_external_data_sha256,
         }
     )
+    obstacle_detector = create_obstacle_detector(
+        {
+            "model_path": args.obstacle_model,
+            "model_url": args.obstacle_model_url,
+            "model_sha256": args.obstacle_model_sha256,
+            "model_pt_path": args.obstacle_model_pt,
+            "model_pt_url": args.obstacle_model_pt_url,
+            "model_pt_sha256": args.obstacle_model_pt_sha256,
+        }
+    )
     result = run_pipeline(
         image_rgb,
         args.diameter_cm,
         segmenter,
         depth_estimator,
-        turntable_mask=turntable_mask,
+        obstacle_detector=obstacle_detector,
     )
     return pipeline_result_to_dict(result)
 

@@ -117,23 +117,28 @@ def test_cli_reads_rgb_passes_mask_and_writes_json(
         captured["depth_config"] = config
         return object()
 
+    def fake_obstacle(config: dict[str, object]) -> object:
+        captured["obstacle_config"] = config
+        return object()
+
     def fake_run_pipeline(
         image_rgb: np.ndarray,
         diameter_cm: float,
         segmenter: object,
         depth_estimator: object,
         *,
-        turntable_mask: np.ndarray | None,
+        obstacle_detector: object,
     ) -> object:
         captured["image_rgb"] = image_rgb
         captured["diameter_cm"] = diameter_cm
         captured["segmenter"] = segmenter
         captured["depth_estimator"] = depth_estimator
-        captured["turntable_mask"] = turntable_mask
+        captured["obstacle_detector"] = obstacle_detector
         return object()
 
     monkeypatch.setattr(main, "create_food_segmenter", fake_segmenter)
     monkeypatch.setattr(main, "create_depth_estimator", fake_depth)
+    monkeypatch.setattr(main, "create_obstacle_detector", fake_obstacle)
     monkeypatch.setattr(main, "run_pipeline", fake_run_pipeline)
     monkeypatch.setattr(main, "pipeline_result_to_dict", lambda result: {"ok": True})
 
@@ -149,8 +154,8 @@ def test_cli_reads_rgb_passes_mask_and_writes_json(
             "rice",
             "--depth-model",
             "depth.onnx",
-            "--turntable-mask",
-            str(mask_path),
+            "--obstacle-model",
+            "obstacle.onnx",
             "--output",
             str(output_path),
         ]
@@ -159,9 +164,10 @@ def test_cli_reads_rgb_passes_mask_and_writes_json(
     assert exit_code == 0
     assert captured["image_rgb"][0, 0].tolist() == [30, 20, 10]
     assert captured["diameter_cm"] == 20.0
-    assert np.asarray(captured["turntable_mask"]).dtype == bool
+    assert captured["obstacle_detector"] is not None
     assert captured["segmenter_config"]["class_names"] == ["rice"]
     assert captured["depth_config"]["model_path"] == "depth.onnx"
+    assert captured["obstacle_config"]["model_path"] == "obstacle.onnx"
     assert output_path.read_text(encoding="utf-8") == '{\n  "ok": true\n}\n'
     assert capsys.readouterr().out == '{\n  "ok": true\n}\n'
 

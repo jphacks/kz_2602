@@ -82,8 +82,10 @@ uv run pytest tests/test_food_segmentation.py tests/test_main.py
 
 ## CLI実行
 
-実画像は次のコマンドで処理できる。ターンテーブルは標準では画像から検出され、必要な
-場合だけ同じサイズのマスク画像を `--turntable-mask` で指定する。
+実画像は次のコマンドで処理できる。ターンテーブル検出では、既定の
+`models/yolov8n-seg.onnx` が返す全セグメンテーションマスクをOR結合し、遮蔽物として
+除外する。新しい画像処理またはYOLO推論が失敗した場合は既存のCanny輪郭検出へ戻る。
+モデルを差し替える場合は `--obstacle-model` を指定する。
 
 ```bash
 uv run python src/main.py \
@@ -91,6 +93,7 @@ uv run python src/main.py \
     --diameter-cm 20 \
     --yolo-model path/to/food.onnx \
     --class-names rice meat vegetable bread \
+    --obstacle-model models/yolov8n-seg.onnx \
     --depth-model models/depth-anything-v2-small.onnx \
     --output result.json
 ```

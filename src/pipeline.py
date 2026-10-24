@@ -17,10 +17,11 @@ from food_heating import (
 from food_measurement import FoodMeasurement, estimate_food_measurement
 from food_segmentation import FoodDetection
 from turntable import (
+    ObstacleMaskDetectorProtocol,
     TurntableCalibration,
     calibrate_turntable,
     fit_ellipse_from_image,
-    fit_ellipse_from_mask,
+    fit_ellipse_from_image_with_obstacles,
 )
 
 
@@ -57,7 +58,7 @@ def run_pipeline(
     food_segmenter: FoodSegmenterProtocol,
     depth_estimator: DepthEstimatorProtocol,
     *,
-    turntable_mask: np.ndarray | None = None,
+    obstacle_detector: ObstacleMaskDetectorProtocol | None = None,
 ) -> PipelineResult:
     """Run turntable calibration, food detection, measurement, and heating.
 
@@ -66,17 +67,22 @@ def run_pipeline(
     receives the original RGB image.
     """
     image_array = _validate_rgb_image(image_rgb)
-    if turntable_mask is not None:
-        mask_array = np.asarray(turntable_mask)
-        if mask_array.ndim != 2 or mask_array.shape != image_array.shape[:2]:
-            raise PipelineError("turntable_mask must match the image dimensions")
-
     try:
-        ellipse = (
-            fit_ellipse_from_mask(turntable_mask)
-            if turntable_mask is not None
-            else fit_ellipse_from_image(image_array)
-        )
+        if obstacle_detector is None:
+            ellipse = fit_ellipse_from_image(image_array)
+        else:
+            try:
+                obstacle_mask = np.asarray(obstacle_detector.predict(image_array))
+                if (
+                    obstacle_mask.ndim != 2
+                    or obstacle_mask.shape != image_array.shape[:2]
+                ):
+                    raise ValueError("obstacle mask must match the image dimensions")
+                ellipse = fit_ellipse_from_image_with_obstacles(
+                    image_array, obstacle_mask
+                )
+            except (AttributeError, TypeError, ValueError):
+                ellipse = fit_ellipse_from_image(image_array)
         calibration = calibrate_turntable(ellipse, diameter_cm)
     except ValueError as error:
         raise PipelineError(f"turntable calibration failed: {error}") from error

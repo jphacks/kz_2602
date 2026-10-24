@@ -28,10 +28,20 @@ class FakeDepthEstimator:
         return self.depth_map
 
 
-def make_turntable_mask() -> np.ndarray:
-    mask = np.zeros((120, 120), dtype=np.uint8)
-    cv2.ellipse(mask, (60, 60), (40, 20), 0.0, 0.0, 360.0, 255, -1)
-    return mask
+class FakeObstacleDetector:
+    def __init__(self, mask: np.ndarray) -> None:
+        self.mask = mask
+        self.image: np.ndarray | None = None
+
+    def predict(self, image: np.ndarray) -> np.ndarray:
+        self.image = image
+        return self.mask
+
+
+def make_turntable_image() -> np.ndarray:
+    image = np.zeros((120, 120), dtype=np.uint8)
+    cv2.ellipse(image, (60, 60), (40, 20), 0.0, 0.0, 360.0, 255, -1)
+    return image
 
 
 def make_detection() -> FoodDetection:
@@ -41,7 +51,8 @@ def make_detection() -> FoodDetection:
 
 
 def test_run_pipeline_connects_all_stages_and_keeps_rgb_contract() -> None:
-    image_rgb = np.zeros((120, 120, 3), dtype=np.uint8)
+    image_rgb = make_turntable_image()
+    image_rgb = np.repeat(image_rgb[:, :, None], 3, axis=2)
     image_rgb[0, 0] = [10, 20, 30]
     segmenter = FakeSegmenter(make_detection())
     depth = np.full((120, 120), 10.0)
@@ -53,7 +64,7 @@ def test_run_pipeline_connects_all_stages_and_keeps_rgb_contract() -> None:
         20.0,
         segmenter,
         estimator,
-        turntable_mask=make_turntable_mask(),
+        obstacle_detector=FakeObstacleDetector(np.zeros((120, 120), dtype=bool)),
     )
 
     assert result.detection.class_id == "rice"
@@ -68,7 +79,7 @@ def test_run_pipeline_connects_all_stages_and_keeps_rgb_contract() -> None:
 
 
 def test_run_pipeline_can_detect_turntable_from_image_without_mask() -> None:
-    image_rgb = make_turntable_mask()
+    image_rgb = make_turntable_image()
     image_rgb = np.repeat(image_rgb[:, :, None], 3, axis=2)
     detection = make_detection()
     segmenter = FakeSegmenter(detection)
@@ -102,9 +113,9 @@ def test_run_pipeline_rejects_invalid_rgb_images(invalid_image: np.ndarray) -> N
 def test_run_pipeline_rejects_depth_shape_mismatch() -> None:
     with pytest.raises(PipelineError, match="depth_map"):
         run_pipeline(
-            np.zeros((120, 120, 3), dtype=np.uint8),
+            np.repeat(make_turntable_image()[:, :, None], 3, axis=2),
             20.0,
             FakeSegmenter(make_detection()),
             FakeDepthEstimator(np.zeros((10, 10))),
-            turntable_mask=make_turntable_mask(),
+            obstacle_detector=FakeObstacleDetector(np.zeros((120, 120), dtype=bool)),
         )
