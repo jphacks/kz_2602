@@ -106,6 +106,17 @@ $$V \approx \frac{2}{3} \times S \times H \quad[\text{cm}^3]$$
 
 1. **浸透深度 $D_p$ のチェック（加熱むら判定）:**
 食品の厚み $H$ とマイクロ波浸透深度 $D_p$ を比較し、$H > D_p$ の場合はユーザーに「途中で裏返し/混ぜる推奨」フラグを提示。
+
+浸透深度は、非磁性体（相対透磁率1.0）かつ電界振幅が $1/e$ になる深さとして、2.45 GHzを既定値に次式で算出する。
+
+$$
+\alpha = \frac{2\pi f}{c}
+\sqrt{\frac{\epsilon'}{2}\left(\sqrt{1+\tan^2\delta}-1\right)},
+\qquad
+D_p = \frac{1}{\alpha}
+$$
+
+ここで、$f$ は周波数、$c$ は光速、$\alpha$ は電界の減衰定数である。実装では $D_p$ をcm単位へ変換する。
 2. **必要エネルギーおよび加熱時間 $T$ [秒] の算出:**
 初期温度 $T_{\text{initial}} = 20^\circ\text{C}$、目標温度 $T_{\text{target}} = 75^\circ\text{C}$、電子レンジ出力 $P = 500\text{W}$、加熱効率 $\eta \approx 0.7$ と仮定：
 
