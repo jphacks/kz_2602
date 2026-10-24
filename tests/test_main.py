@@ -16,6 +16,12 @@ class FakeSegmenter:
         self.options = kwargs
 
 
+class FakeDepthEstimator:
+    def __init__(self, model_path: str, **kwargs: object) -> None:
+        self.model_path = model_path
+        self.options = kwargs
+
+
 def test_create_food_segmenter_passes_json_settings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -59,3 +65,28 @@ def test_create_food_segmenter_rejects_invalid_settings(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         main.create_food_segmenter(config)
+
+
+def test_create_depth_estimator_passes_json_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(main, "DepthAnythingV2SmallEstimator", FakeDepthEstimator)
+    monkeypatch.setattr(
+        main, "ensure_onnx_model_file", lambda model_path, *args, **kwargs: model_path
+    )
+    model_path = tmp_path / "depth.onnx"
+
+    estimator = main.create_depth_estimator(
+        {
+            "model_path": str(model_path),
+            "input_size": [384, 384],
+            "output_is_inverse_depth": False,
+        }
+    )
+
+    assert estimator.model_path == str(model_path)
+    assert estimator.options == {
+        "input_size": (384, 384),
+        "output_is_inverse_depth": False,
+    }

@@ -1,4 +1,4 @@
-"""Model acquisition and conversion helpers for YOLO segmentation."""
+"""Model acquisition and conversion helpers."""
 
 from __future__ import annotations
 
@@ -23,7 +23,13 @@ def _verify_model_hash(model_path: Path, expected_sha256: str | None) -> None:
         raise ValueError(f"SHA-256 mismatch for model: {model_path}")
 
 
-def _download_model_file(url: str, path: Path, expected_sha256: Any) -> None:
+def _download_model_file(
+    url: str,
+    path: Path,
+    expected_sha256: Any,
+    *,
+    model_kind: str = "YOLO",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     file_descriptor, temporary_name = tempfile.mkstemp(
@@ -39,7 +45,61 @@ def _download_model_file(url: str, path: Path, expected_sha256: Any) -> None:
         os.replace(temporary_path, path)
     except (OSError, ValueError) as error:
         temporary_path.unlink(missing_ok=True)
-        raise ValueError(f"could not download YOLO model: {url}") from error
+        raise ValueError(f"could not download {model_kind} model: {url}") from error
+
+
+def _validate_sha256(value: Any, name: str) -> None:
+    if value is not None and (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in value)
+    ):
+        raise ValueError(f"{name} must be a 64-character hexadecimal string")
+
+
+def ensure_onnx_model_file(
+    model_path: str,
+    model_url: Any,
+    model_sha256: Any,
+    *,
+    external_data_path: Any = None,
+    external_data_url: Any = None,
+    external_data_sha256: Any = None,
+) -> str:
+    """Ensure an ONNX model and optional external-data file are cached."""
+    path = Path(model_path)
+    _validate_sha256(model_sha256, "model_sha256")
+    _validate_sha256(external_data_sha256, "external_data_sha256")
+
+    if path.exists():
+        _verify_model_hash(path, model_sha256)
+    else:
+        if not isinstance(model_url, str) or not model_url:
+            raise ValueError("model_url is required when model_path does not exist")
+        _download_model_file(model_url, path, model_sha256, model_kind="ONNX")
+
+    if external_data_path is None and external_data_url is not None:
+        external_data_path = str(path.with_name("model.onnx_data"))
+    if external_data_path is None:
+        return str(path)
+    if not isinstance(external_data_path, str) or not external_data_path:
+        raise ValueError("external_data_path must be a non-empty string")
+
+    data_path = Path(external_data_path)
+    if data_path.exists():
+        _verify_model_hash(data_path, external_data_sha256)
+    else:
+        if not isinstance(external_data_url, str) or not external_data_url:
+            raise ValueError(
+                "external_data_url is required when external_data_path does not exist"
+            )
+        _download_model_file(
+            external_data_url,
+            data_path,
+            external_data_sha256,
+            model_kind="ONNX external data",
+        )
+    return str(path)
 
 
 def _export_pt_to_onnx(
@@ -85,15 +145,7 @@ def ensure_model_file(
 ) -> str:
     """Ensure an ONNX model exists, downloading or converting it when needed."""
     path = Path(model_path)
-    if model_sha256 is not None:
-        if (
-            not isinstance(model_sha256, str)
-            or len(model_sha256) != 64
-            or any(
-                character not in "0123456789abcdefABCDEF" for character in model_sha256
-            )
-        ):
-            raise ValueError("model_sha256 must be a 64-character hexadecimal string")
+    _validate_sha256(model_sha256, "model_sha256")
 
     if path.exists():
         _verify_model_hash(path, model_sha256)
@@ -122,5 +174,4 @@ def ensure_model_file(
             "model_url or model_pt_path is required when model_path does not exist"
         )
 
-    _download_model_file(model_url, path, model_sha256)
-    return str(path)
+    return ensure_onnx_model_file(model_path, model_url, model_sha256)

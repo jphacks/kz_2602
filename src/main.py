@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
+from depth_anything import DepthAnythingV2SmallEstimator
 from food_segmentation import FoodSegmenter
-from model_manager import ensure_model_file
+from model_manager import ensure_model_file, ensure_onnx_model_file
 from pipeline import PipelineResult
+
+DEFAULT_DEPTH_MODEL_URL = (
+    "https://huggingface.co/onnx-community/depth-anything-v2-small-ONNX/"
+    "resolve/main/onnx/model.onnx?download=true"
+)
+DEFAULT_DEPTH_EXTERNAL_DATA_URL = (
+    "https://huggingface.co/onnx-community/depth-anything-v2-small-ONNX/"
+    "resolve/main/onnx/model.onnx_data?download=true"
+)
 
 
 def create_food_segmenter(config: Mapping[str, Any]) -> FoodSegmenter:
@@ -56,6 +67,43 @@ def create_food_segmenter(config: Mapping[str, Any]) -> FoodSegmenter:
         input_size=(input_size[0], input_size[1]),
         confidence_threshold=config.get("confidence_threshold", 0.25),
         iou_threshold=config.get("iou_threshold", 0.45),
+    )
+
+
+def create_depth_estimator(config: Mapping[str, Any]) -> DepthAnythingV2SmallEstimator:
+    """Build and cache a Depth Anything V2 Small ONNX adapter."""
+    model_path = config.get("model_path")
+    if not isinstance(model_path, str) or not model_path:
+        raise ValueError("model_path must be a non-empty string")
+
+    input_size = config.get("input_size", [518, 518])
+    if (
+        not isinstance(input_size, Sequence)
+        or isinstance(input_size, (str, bytes))
+        or len(input_size) != 2
+        or not all(
+            isinstance(size, int) and not isinstance(size, bool) and size > 0
+            for size in input_size
+        )
+    ):
+        raise ValueError("input_size must contain two positive integers")
+
+    default_external_path = str(Path(model_path).with_name("model.onnx_data"))
+    cached_model_path = ensure_onnx_model_file(
+        model_path,
+        config.get("model_url", DEFAULT_DEPTH_MODEL_URL),
+        config.get("model_sha256"),
+        external_data_path=config.get("external_data_path", default_external_path),
+        external_data_url=config.get(
+            "external_data_url", DEFAULT_DEPTH_EXTERNAL_DATA_URL
+        ),
+        external_data_sha256=config.get("external_data_sha256"),
+    )
+
+    return DepthAnythingV2SmallEstimator(
+        cached_model_path,
+        input_size=(input_size[0], input_size[1]),
+        output_is_inverse_depth=config.get("output_is_inverse_depth", True),
     )
 
 

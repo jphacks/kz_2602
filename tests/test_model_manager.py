@@ -95,3 +95,51 @@ def test_ensure_model_file_converts_pt_model(
     assert result == str(onnx_path)
     assert export_calls == [(pt_path, onnx_path, (320, 416))]
     assert onnx_path.read_bytes() == b"onnx model"
+
+
+def test_ensure_onnx_model_file_downloads_external_data_and_caches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "depth.onnx"
+    external_path = tmp_path / "model.onnx_data"
+    model_bytes = b"onnx model"
+    external_bytes = b"external weights"
+    responses = iter([FakeResponse(model_bytes), FakeResponse(external_bytes)])
+    monkeypatch.setattr(model_manager, "urlopen", lambda url, timeout: next(responses))
+
+    result = model_manager.ensure_onnx_model_file(
+        str(model_path),
+        "https://example.com/model.onnx",
+        hashlib.sha256(model_bytes).hexdigest(),
+        external_data_path=str(external_path),
+        external_data_url="https://example.com/model.onnx_data",
+        external_data_sha256=hashlib.sha256(external_bytes).hexdigest(),
+    )
+
+    assert result == str(model_path)
+    assert model_path.read_bytes() == model_bytes
+    assert external_path.read_bytes() == external_bytes
+
+
+def test_ensure_onnx_model_file_rejects_external_checksum_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_path = tmp_path / "depth.onnx"
+    external_path = tmp_path / "model.onnx_data"
+    monkeypatch.setattr(
+        model_manager,
+        "urlopen",
+        lambda url, timeout: FakeResponse(b"invalid external weights"),
+    )
+
+    with pytest.raises(ValueError, match="could not download ONNX external data model"):
+        model_manager.ensure_onnx_model_file(
+            str(model_path),
+            "https://example.com/model.onnx",
+            hashlib.sha256(b"invalid external weights").hexdigest(),
+            external_data_path=str(external_path),
+            external_data_url="https://example.com/model.onnx_data",
+            external_data_sha256="0" * 64,
+        )
+
+    assert not external_path.exists()
