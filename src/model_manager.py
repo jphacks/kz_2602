@@ -65,6 +65,7 @@ def ensure_onnx_model_file(
     external_data_path: Any = None,
     external_data_url: Any = None,
     external_data_sha256: Any = None,
+    model_kind: str = "ONNX",
 ) -> str:
     """Ensure an ONNX model and optional external-data file are cached."""
     path = Path(model_path)
@@ -76,7 +77,7 @@ def ensure_onnx_model_file(
     else:
         if not isinstance(model_url, str) or not model_url:
             raise ValueError("model_url is required when model_path does not exist")
-        _download_model_file(model_url, path, model_sha256, model_kind="ONNX")
+        _download_model_file(model_url, path, model_sha256, model_kind=model_kind)
 
     if external_data_path is None and external_data_url is not None:
         external_data_path = str(path.with_name("model.onnx_data"))
@@ -174,4 +175,6 @@ def ensure_model_file(
             "model_url or model_pt_path is required when model_path does not exist"
         )
 
-    return ensure_onnx_model_file(model_path, model_url, model_sha256)
+    return ensure_onnx_model_file(
+        model_path, model_url, model_sha256, model_kind="YOLO"
+    )

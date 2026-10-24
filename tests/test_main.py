@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 import main
@@ -90,3 +92,95 @@ def test_create_depth_estimator_passes_json_settings(
         "input_size": (384, 384),
         "output_is_inverse_depth": False,
     }
+
+
+def test_cli_reads_rgb_passes_mask_and_writes_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    image_path = tmp_path / "input.png"
+    mask_path = tmp_path / "mask.png"
+    output_path = tmp_path / "result.json"
+    image_bgr = np.zeros((4, 5, 3), dtype=np.uint8)
+    image_bgr[0, 0] = [10, 20, 30]
+    assert cv2.imwrite(str(image_path), image_bgr)
+    assert cv2.imwrite(str(mask_path), np.array([[255] * 5] * 4, dtype=np.uint8))
+
+    captured: dict[str, object] = {}
+
+    def fake_segmenter(config: dict[str, object]) -> object:
+        captured["segmenter_config"] = config
+        return object()
+
+    def fake_depth(config: dict[str, object]) -> object:
+        captured["depth_config"] = config
+        return object()
+
+    def fake_run_pipeline(
+        image_rgb: np.ndarray,
+        diameter_cm: float,
+        segmenter: object,
+        depth_estimator: object,
+        *,
+        turntable_mask: np.ndarray | None,
+    ) -> object:
+        captured["image_rgb"] = image_rgb
+        captured["diameter_cm"] = diameter_cm
+        captured["segmenter"] = segmenter
+        captured["depth_estimator"] = depth_estimator
+        captured["turntable_mask"] = turntable_mask
+        return object()
+
+    monkeypatch.setattr(main, "create_food_segmenter", fake_segmenter)
+    monkeypatch.setattr(main, "create_depth_estimator", fake_depth)
+    monkeypatch.setattr(main, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(main, "pipeline_result_to_dict", lambda result: {"ok": True})
+
+    exit_code = main.main(
+        [
+            "--image",
+            str(image_path),
+            "--diameter-cm",
+            "20",
+            "--yolo-model",
+            "food.onnx",
+            "--class-names",
+            "rice",
+            "--depth-model",
+            "depth.onnx",
+            "--turntable-mask",
+            str(mask_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["image_rgb"][0, 0].tolist() == [30, 20, 10]
+    assert captured["diameter_cm"] == 20.0
+    assert np.asarray(captured["turntable_mask"]).dtype == bool
+    assert captured["segmenter_config"]["class_names"] == ["rice"]
+    assert captured["depth_config"]["model_path"] == "depth.onnx"
+    assert output_path.read_text(encoding="utf-8") == '{\n  "ok": true\n}\n'
+    assert capsys.readouterr().out == '{\n  "ok": true\n}\n'
+
+
+def test_cli_rejects_unsupported_model_classes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main.main(
+        [
+            "--image",
+            "input.png",
+            "--diameter-cm",
+            "20",
+            "--yolo-model",
+            "yolov8n-seg.onnx",
+            "--class-names",
+            "person",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "unsupported: person" in capsys.readouterr().err

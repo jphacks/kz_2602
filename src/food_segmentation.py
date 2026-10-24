@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import cv2
 import numpy as np
@@ -45,6 +45,7 @@ class FoodSegmenter:
         input_size: tuple[int, int] = (640, 640),
         confidence_threshold: float = 0.25,
         iou_threshold: float = 0.45,
+        class_aliases: Mapping[str, str] | None = None,
         session: Any | None = None,
     ) -> None:
         if len(class_names) == 0 or any(not name for name in class_names):
@@ -62,6 +63,11 @@ class FoodSegmenter:
         self._input_height, self._input_width = input_size
         self._confidence_threshold = float(confidence_threshold)
         self._iou_threshold = float(iou_threshold)
+        self._class_aliases = dict(class_aliases or {})
+        if any(
+            not source or not target for source, target in self._class_aliases.items()
+        ):
+            raise FoodSegmentationError("class_aliases must contain non-empty names")
         self._session = (
             session if session is not None else self._load_session(model_path)
         )
@@ -106,7 +112,9 @@ class FoodSegmenter:
             raise FoodSegmentationError("the decoded food mask is empty")
         return FoodDetection(
             mask=mask,
-            class_id=self._class_names[class_index],
+            class_id=self._class_aliases.get(
+                self._class_names[class_index], self._class_names[class_index]
+            ),
             confidence=confidence,
             y_base_px=int(np.flatnonzero(mask.any(axis=1)).max()),
         )
@@ -177,7 +185,15 @@ class FoodSegmenter:
         if prediction.shape[0] == expected_channels:
             prediction = prediction.T
         elif prediction.shape[1] != expected_channels:
-            raise FoodSegmentationError("YOLO prediction output has too few channels")
+            channel_count = min(prediction.shape)
+            detected_class_count = channel_count - 4 - prototype.shape[2]
+            raise FoodSegmentationError(
+                "YOLO model class count does not match class_names: "
+                f"output shape={prediction.shape}, prototype coefficients="
+                f"{prototype.shape[2]}, configured classes={len(self._class_names)}, "
+                f"detected classes={detected_class_count}. "
+                "Use a food-trained YOLO segmentation model with matching class_names."
+            )
         return prediction, prototype
 
     def _select_candidates(
@@ -195,6 +211,14 @@ class FoodSegmenter:
         confidences = scores[np.arange(len(scores)), class_indices]
         valid = np.isfinite(boxes).all(axis=1) & np.isfinite(confidences)
         valid &= np.isfinite(coefficients).all(axis=1)
+        if self._class_aliases:
+            valid &= np.array(
+                [
+                    self._class_names[index] in self._class_aliases
+                    for index in class_indices
+                ],
+                dtype=bool,
+            )
         valid &= confidences >= self._confidence_threshold
         if not valid.any():
             return []

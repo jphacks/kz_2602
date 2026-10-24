@@ -32,6 +32,9 @@ food_segmenter = create_food_segmenter(
 `class_names` はモデルのクラスインデックス順と一致させる。物性データベースで使用
 できるクラスは現在 `rice`、`meat`、`vegetable`、`bread` である。
 
+同梱の `models/yolov8n-seg.onnx` はCOCO標準モデルのため、食品4クラス用の設定には
+使用しない。食品用に学習したモデルを `--yolo-model` または `model_path` で指定する。
+
 `model_path` が存在しない場合は、`model_url` からONNXファイルを起動時にダウンロード
 する。ダウンロードは一時ファイルへ行ってから配置するため、途中で失敗したファイルは
 モデルとして残らない。`model_sha256` を指定すると、既存ファイルとダウンロードした
@@ -76,3 +79,29 @@ uv run pytest tests/test_food_segmentation.py tests/test_main.py
 実モデルを使う場合は、代表画像でマスク位置、クラス名、信頼度、`y_base_px`、推論時間を
 確認する。モデルのクラス順と設定の `class_names` が一致しない場合、後段の物性参照結果も
 誤るため注意する。
+
+## CLI実行
+
+実画像は次のコマンドで処理できる。ターンテーブルは標準では画像から検出され、必要な
+場合だけ同じサイズのマスク画像を `--turntable-mask` で指定する。
+
+```bash
+uv run python src/main.py \
+    --image path/to/input.jpg \
+    --diameter-cm 20 \
+    --yolo-model path/to/food.onnx \
+    --class-names rice meat vegetable bread \
+    --depth-model models/depth-anything-v2-small.onnx \
+    --output result.json
+```
+
+Depth AnythingのONNX本体と外部データがない場合は、既定のHugging Face URLから取得して
+キャッシュする。YOLOモデルは食品用モデルを自分で配置するか、`--yolo-model-url`、
+`--yolo-model-pt`、`--yolo-model-pt-url` で指定する。
+
+同梱のCOCO標準モデルを使う場合は、`--coco` を指定する。COCOの食品クラスのうち、
+`bowl` は `bowl`、
+`hot dog` は `meat`、`broccoli`、`carrot`、`apple`、`banana`、`orange` は `vegetable`、
+`sandwich`、`pizza`、`donut`、`cake` は `bread` として物性データベースへ渡される。
+`rice` はCOCOの検出対象に含まれないため、米を扱うには食品用モデルが必要である。
+`bowl` の計算値は容器用の近似値であり、食品の加熱予測には使用しない。

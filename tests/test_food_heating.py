@@ -35,6 +35,7 @@ def make_measurement(
         ("meat", 1.00, 50.0, 20.0, 0.40, 3.2),
         ("vegetable", 0.95, 60.0, 15.0, 0.25, 3.8),
         ("bread", 0.35, 5.0, 1.0, 0.20, 1.8),
+        ("bowl", 1.20, 4.0, 0.20, 0.05, 1.00),
     ],
 )
 def test_lookup_food_properties_returns_design_values(

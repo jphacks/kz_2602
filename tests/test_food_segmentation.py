@@ -73,6 +73,16 @@ def test_predict_returns_original_size_mask_and_base_coordinate() -> None:
     assert session.input.dtype == np.float32
 
 
+def test_predict_maps_configured_class_alias() -> None:
+    segmenter, _ = make_segmenter(
+        segmentation_outputs(), class_aliases={"rice": "bread"}
+    )
+
+    detection = segmenter.predict(np.zeros((10, 20, 3), dtype=np.uint8))
+
+    assert detection.class_id == "bread"
+
+
 def test_predict_rejects_multiple_food_detections() -> None:
     segmenter, _ = make_segmenter(segmentation_outputs(second_detection=True))
 
