@@ -83,7 +83,10 @@ class FoodSegmenter:
         """Return the only food detection in ``image``."""
         image_array = self._validate_image(image)
         model_input, letterbox = self._preprocess(image_array)
-        outputs = self._session.run(None, {self._input_name(): model_input})
+        try:
+            outputs = self._session.run(None, {self._input_name(): model_input})
+        except (RuntimeError, ValueError, TypeError) as error:
+            raise FoodSegmentationError("YOLO inference failed") from error
         predictions, prototypes = self._parse_outputs(outputs)
         candidates = self._select_candidates(predictions)
         if len(candidates) != 1:
@@ -165,12 +168,16 @@ class FoodSegmenter:
             raise FoodSegmentationError("only batch size one is supported")
         prediction = prediction[0]
         prototype = prototype[0]
-        if prediction.shape[0] < 5:
-            raise FoodSegmentationError("YOLO prediction output has too few channels")
-        if prediction.shape[0] > prediction.shape[1]:
-            prediction = prediction.T
-        if prototype.shape[0] < prototype.shape[1]:
+        if (
+            prototype.shape[0] <= prototype.shape[1]
+            and prototype.shape[0] <= prototype.shape[2]
+        ):
             prototype = prototype.transpose(1, 2, 0)
+        expected_channels = 4 + len(self._class_names) + prototype.shape[2]
+        if prediction.shape[0] == expected_channels:
+            prediction = prediction.T
+        elif prediction.shape[1] != expected_channels:
+            raise FoodSegmentationError("YOLO prediction output has too few channels")
         return prediction, prototype
 
     def _select_candidates(
@@ -187,6 +194,7 @@ class FoodSegmenter:
         class_indices = scores.argmax(axis=1)
         confidences = scores[np.arange(len(scores)), class_indices]
         valid = np.isfinite(boxes).all(axis=1) & np.isfinite(confidences)
+        valid &= np.isfinite(coefficients).all(axis=1)
         valid &= confidences >= self._confidence_threshold
         if not valid.any():
             return []
@@ -246,8 +254,6 @@ class FoodSegmenter:
         input_width = letterbox.width + 2 * letterbox.pad_x
         input_height = letterbox.height + 2 * letterbox.pad_y
         resized = cv2.resize(mask, (input_width, input_height))
-        crop_x = round(letterbox.pad_x / (letterbox.scale))
-        crop_y = round(letterbox.pad_y / (letterbox.scale))
         content = resized[
             letterbox.pad_y : letterbox.pad_y + letterbox.height,
             letterbox.pad_x : letterbox.pad_x + letterbox.width,

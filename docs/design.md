@@ -61,7 +61,7 @@ $$\cos\theta = \text{clamp}\left(\frac{L_{\text{minor}}}{L_{\text{major}}}, 0.0,
 ### Step 2: 食品領域抽出・分類モジュール
 
 * **目的:** 食品の領域（マスク）を分離し、物性参照用のカテゴリを識別する。
-* **使用モデル:** `YOLOv8n-seg` または `YOLO11n-seg`（ONNX形式に最適化）
+* **使用モデル:** `YOLOv8n-seg`（ONNX形式にエクスポート）
 * **出力:**
 * **食品マスク:** バイナリ画像 $M(x,y)$
 * **クラスID:** 例: `meat`, `rice`, `bread`, `vegetable` 等
@@ -150,3 +150,20 @@ RGB画像
 統合関数は`src/pipeline.py`の`run_pipeline`で提供する。深度推定器は画像を受け取り2次元深度マップを返す依存性注入契約とし、深度値は小さいほどカメラに近いものとして既存の頂点抽出処理へ渡す。Depth Anything V2のONNX実推論アダプターは、この契約を満たす別実装として追加する。
 
 統合結果は、校正結果、食品検出、物性、寸法・重量、加熱パラメータをまとめた`PipelineResult`として返す。`src/main.py`の`pipeline_result_to_dict`でJSON出力用の組み込み型へ変換できる。
+
+### 5.1 YOLOv8n-seg ONNX実装契約
+
+食品セグメンテーションは、`src/food_segmentation.py` の `FoodSegmenter` が
+ONNX Runtimeで実行する。高水準のUltralytics APIには依存せず、エクスポート済み
+YOLOv8n-segモデルを直接読み込む。
+
+* **入力:** BGR、`uint8`、3チャンネル画像。letterboxで指定入力サイズへ変換し、RGB化・正規化してモデルへ渡す。
+* **出力:** predictionとprototypeの2テンソル。predictionは`4 + クラス数 + マスク係数数`のチャンネル、prototypeはマスク係数と空間特徴を持つ。
+* **軸:** channel-firstとchannel-lastの一般的な出力軸を受け付け、係数数とクラス数から正規化する。
+* **後処理:** クラス信頼度による閾値処理、IoUによるNMS、prototypeと係数からのマスク復元を行う。
+* **出力:** 元画像サイズのboolマスク、設定で与えたクラス名、信頼度、マスク最下部の`y_base_px`。
+* **制約:** 初期版はバッチサイズ1かつ単一食品に対応し、NMS後の検出件数が1件でない場合はエラーとする。
+
+モデルパス、クラス名、入力サイズ、信頼度閾値、IoU閾値は`src/main.py`の
+`create_food_segmenter`へJSON互換の設定として渡す。クラス名はモデル内のクラス順と
+一致させ、後段の物性データベースが対応するクラスを指定する。

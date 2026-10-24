@@ -23,6 +23,11 @@ class FakeSession:
         return self.outputs
 
 
+class FailingSession(FakeSession):
+    def run(self, _: object, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+        raise RuntimeError("inference failed")
+
+
 def segmentation_outputs(
     *, class_score: float = 0.9, second_detection: bool = False
 ) -> list[np.ndarray]:
@@ -81,6 +86,43 @@ def test_predict_returns_no_detection_below_threshold() -> None:
     )
 
     with pytest.raises(FoodSegmentationError, match="exactly one"):
+        segmenter.predict(np.zeros((20, 20, 3), dtype=np.uint8))
+
+
+@pytest.mark.parametrize(
+    ("prediction_shape", "prototype_shape"),
+    [((1, 7, 3), (1, 2, 4, 4)), ((1, 3, 7), (1, 4, 4, 2))],
+)
+def test_parse_outputs_normalizes_common_yolov8_axes(
+    prediction_shape: tuple[int, ...], prototype_shape: tuple[int, ...]
+) -> None:
+    segmenter, _ = make_segmenter(
+        [
+            np.zeros(prediction_shape, dtype=np.float32),
+            np.zeros(prototype_shape, dtype=np.float32),
+        ]
+    )
+
+    predictions, prototypes = segmenter._parse_outputs(
+        [
+            np.zeros(prediction_shape, dtype=np.float32),
+            np.zeros(prototype_shape, dtype=np.float32),
+        ]
+    )
+
+    assert predictions.shape == (3, 7)
+    assert prototypes.shape == (4, 4, 2)
+
+
+def test_predict_wraps_inference_failures() -> None:
+    segmenter = FoodSegmenter(
+        None,
+        ["rice"],
+        input_size=(20, 20),
+        session=FailingSession([]),
+    )
+
+    with pytest.raises(FoodSegmentationError, match="inference failed"):
         segmenter.predict(np.zeros((20, 20, 3), dtype=np.uint8))
 
 

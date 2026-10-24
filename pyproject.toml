@@ -7,6 +7,7 @@ dependencies = [
   "numpy>=2.2",
   "onnxruntime>=1.20",
   "opencv-python-headless>=4.11",
+  "ultralytics>=8.4.185",
 ]
 
 [dependency-groups]
