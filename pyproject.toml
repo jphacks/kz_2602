@@ -1,15 +1,29 @@
 [project]
 name = "src"
 version = "0.1.0"
-authors = [
-    { name = "toyama170402", email = "toyamasoujinn@gmail.com" }
-]
+authors = [{ name = "toyama170402", email = "toyamasoujinn@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+  "fastapi>=0.115",
+  "numpy>=2.2",
+  "onnxruntime>=1.20",
+  "opencv-python-headless>=4.11",
+  "python-multipart>=0.0.20",
+  "ultralytics>=8.4.185",
+  "uvicorn>=0.34",
+]
 
-[project.scripts]
-src = "src:main"
+[dependency-groups]
+dev = ["httpx>=0.28", "pytest>=8.3"]
+
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "src"
+module-root = ""
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
