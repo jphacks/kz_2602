@@ -31,10 +31,12 @@ class ServerComponents:
         food_segmenter: Any,
         depth_estimator: Any,
         obstacle_detector: Any,
+        segmentation_engine: Any | None = None,
     ) -> None:
         self.food_segmenter = food_segmenter
         self.depth_estimator = depth_estimator
         self.obstacle_detector = obstacle_detector
+        self.segmentation_engine = segmentation_engine
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -166,13 +168,18 @@ def create_app(
 
         components: ServerComponents = app.state.components
         try:
+            pipeline_options: dict[str, Any] = {
+                "obstacle_detector": components.obstacle_detector,
+                "initial_temperature_c": initial_temperature,
+            }
+            if components.segmentation_engine is not None:
+                pipeline_options["segmentation_engine"] = components.segmentation_engine
             result = pipeline_runner(
                 image_rgb,
                 diameter,
                 components.food_segmenter,
                 components.depth_estimator,
-                obstacle_detector=components.obstacle_detector,
-                initial_temperature_c=initial_temperature,
+                **pipeline_options,
             )
         except PipelineError as error:
             return _error_response(422, "pipeline_error", str(error))

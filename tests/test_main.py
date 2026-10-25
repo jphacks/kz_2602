@@ -26,6 +26,15 @@ class FakeDepthEstimator:
         self.options = kwargs
 
 
+class FakeObstacleDetector:
+    def __init__(
+        self, model_path: str | None, class_names: list[str], **kwargs: object
+    ) -> None:
+        self.model_path = model_path
+        self.class_names = class_names
+        self.options = kwargs
+
+
 def test_create_food_segmenter_passes_json_settings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -111,17 +120,15 @@ def test_cli_reads_rgb_passes_mask_and_writes_json(
 
     captured: dict[str, object] = {}
 
-    def fake_segmenter(config: dict[str, object]) -> object:
-        captured["segmenter_config"] = config
-        return object()
-
     def fake_depth(config: dict[str, object]) -> object:
         captured["depth_config"] = config
         return object()
 
-    def fake_obstacle(config: dict[str, object]) -> object:
-        captured["obstacle_config"] = config
-        return object()
+    engine = object()
+
+    def fake_engine(config: dict[str, object]) -> object:
+        captured["engine_config"] = config
+        return engine
 
     def fake_run_pipeline(
         image_rgb: np.ndarray,
@@ -130,17 +137,20 @@ def test_cli_reads_rgb_passes_mask_and_writes_json(
         depth_estimator: object,
         *,
         obstacle_detector: object,
+        segmentation_engine: object,
     ) -> object:
         captured["image_rgb"] = image_rgb
         captured["diameter_cm"] = diameter_cm
         captured["segmenter"] = segmenter
         captured["depth_estimator"] = depth_estimator
         captured["obstacle_detector"] = obstacle_detector
+        captured["segmentation_engine"] = segmentation_engine
         return object()
 
-    monkeypatch.setattr(main, "create_food_segmenter", fake_segmenter)
+    monkeypatch.setattr(main, "create_yolo_segmentation_engine", fake_engine)
+    monkeypatch.setattr(main, "FoodSegmenter", FakeSegmenter)
+    monkeypatch.setattr(main, "YoloObstacleDetector", FakeObstacleDetector)
     monkeypatch.setattr(main, "create_depth_estimator", fake_depth)
-    monkeypatch.setattr(main, "create_obstacle_detector", fake_obstacle)
     monkeypatch.setattr(main, "run_pipeline", fake_run_pipeline)
     monkeypatch.setattr(main, "pipeline_result_to_dict", lambda result: {"ok": True})
 
@@ -166,10 +176,10 @@ def test_cli_reads_rgb_passes_mask_and_writes_json(
     assert exit_code == 0
     assert captured["image_rgb"][0, 0].tolist() == [30, 20, 10]
     assert captured["diameter_cm"] == 20.0
-    assert captured["obstacle_detector"] is not None
-    assert captured["segmenter_config"]["class_names"] == ["rice"]
+    assert captured["obstacle_detector"].options["engine"] is engine
+    assert captured["segmentation_engine"] is engine
+    assert captured["engine_config"]["class_names"] == ["rice"]
     assert captured["depth_config"]["model_path"] == "depth.onnx"
-    assert captured["obstacle_config"]["model_path"] == "obstacle.onnx"
     assert output_path.read_text(encoding="utf-8") == '{\n  "ok": true\n}\n'
     assert capsys.readouterr().out == '{\n  "ok": true\n}\n'
 
@@ -199,9 +209,28 @@ def test_cli_can_start_http_server_without_an_input_image(
 ) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(main, "create_food_segmenter", lambda config: config)
+    monkeypatch.setattr(
+        main, "create_yolo_segmentation_engine", lambda config: "engine"
+    )
+    monkeypatch.setattr(
+        main,
+        "FoodSegmenter",
+        lambda model_path, class_names, **kwargs: {
+            "model_path": model_path,
+            "class_names": class_names,
+            "options": kwargs,
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "YoloObstacleDetector",
+        lambda model_path, class_names, **kwargs: {
+            "model_path": model_path,
+            "class_names": class_names,
+            "options": kwargs,
+        },
+    )
     monkeypatch.setattr(main, "create_depth_estimator", lambda config: config)
-    monkeypatch.setattr(main, "create_obstacle_detector", lambda config: config)
 
     def fake_create_app(factory: object) -> object:
         captured["components"] = factory()
@@ -239,7 +268,10 @@ def test_cli_can_start_http_server_without_an_input_image(
         "workers": 1,
     }
     components = captured["components"]
-    assert components.food_segmenter["model_path"] == "food.onnx"
+    assert components.food_segmenter["model_path"] is None
     assert components.food_segmenter["class_names"] == ["rice"]
     assert components.depth_estimator["model_path"] == "depth.onnx"
-    assert components.obstacle_detector["model_path"] == "obstacle.onnx"
+    assert components.obstacle_detector["model_path"] is None
+    assert components.food_segmenter["options"]["engine"] == "engine"
+    assert components.obstacle_detector["options"]["engine"] == "engine"
+    assert components.segmentation_engine == "engine"

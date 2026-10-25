@@ -17,6 +17,7 @@ from food_segmentation import FoodSegmenter
 from model_manager import ensure_model_file, ensure_onnx_model_file
 from pipeline import PipelineError, PipelineResult, run_pipeline
 from turntable_obstacle import YoloObstacleDetector
+from yolo_segmentation import YoloSegmentationEngine
 
 DEFAULT_DEPTH_MODEL_URL = (
     "https://huggingface.co/onnx-community/depth-anything-v2-small-ONNX/"
@@ -125,6 +126,56 @@ COCO_FOOD_CLASS_ALIASES = {
 }
 
 
+def create_yolo_segmentation_engine(
+    config: Mapping[str, Any],
+) -> YoloSegmentationEngine:
+    """Build the shared ONNX Runtime YOLO segmentation engine."""
+    try:
+        model_path = config["model_path"]
+        class_names = config["class_names"]
+    except KeyError as error:
+        raise ValueError(f"missing segmenter setting: {error.args[0]}") from error
+
+    if not isinstance(model_path, str) or not model_path:
+        raise ValueError("model_path must be a non-empty string")
+    if (
+        not isinstance(class_names, Sequence)
+        or isinstance(class_names, (str, bytes))
+        or len(class_names) == 0
+        or not all(isinstance(name, str) and name for name in class_names)
+    ):
+        raise ValueError("class_names must be a sequence of non-empty strings")
+
+    input_size = config.get("input_size", [640, 640])
+    if (
+        not isinstance(input_size, Sequence)
+        or isinstance(input_size, (str, bytes))
+        or len(input_size) != 2
+        or not all(
+            isinstance(size, int) and not isinstance(size, bool) and size > 0
+            for size in input_size
+        )
+    ):
+        raise ValueError("input_size must contain two positive integers")
+
+    cached_model_path = ensure_model_file(
+        model_path,
+        config.get("model_url"),
+        config.get("model_sha256"),
+        config.get("model_pt_path"),
+        config.get("model_pt_url"),
+        config.get("model_pt_sha256"),
+        (input_size[0], input_size[1]),
+    )
+    return YoloSegmentationEngine(
+        cached_model_path,
+        class_names,
+        input_size=(input_size[0], input_size[1]),
+        confidence_threshold=config.get("confidence_threshold", 0.25),
+        iou_threshold=config.get("iou_threshold", 0.45),
+    )
+
+
 def create_food_segmenter(config: Mapping[str, Any]) -> FoodSegmenter:
     """Build a YOLOv8 segmentation adapter from JSON-compatible settings."""
     try:
@@ -221,6 +272,21 @@ def create_obstacle_detector(config: Mapping[str, Any]) -> YoloObstacleDetector:
     model_path = config.get("model_path", DEFAULT_OBSTACLE_MODEL_PATH)
     if not isinstance(model_path, str) or not model_path:
         raise ValueError("model_path must be a non-empty string")
+    class_names = config.get("class_names", COCO_CLASS_NAMES)
+    if (
+        not isinstance(class_names, Sequence)
+        or isinstance(class_names, (str, bytes))
+        or len(class_names) == 0
+        or not all(isinstance(name, str) and name for name in class_names)
+    ):
+        raise ValueError("class_names must be a sequence of non-empty strings")
+    obstacle_class_names = config.get("obstacle_class_names", class_names)
+    if (
+        not isinstance(obstacle_class_names, Sequence)
+        or isinstance(obstacle_class_names, (str, bytes))
+        or not all(isinstance(name, str) and name for name in obstacle_class_names)
+    ):
+        raise ValueError("obstacle_class_names must be a sequence of non-empty strings")
     input_size = config.get("input_size", [640, 640])
     if (
         not isinstance(input_size, Sequence)
@@ -244,6 +310,9 @@ def create_obstacle_detector(config: Mapping[str, Any]) -> YoloObstacleDetector:
     )
     return YoloObstacleDetector(
         cached_model_path,
+        class_names,
+        obstacle_class_names=obstacle_class_names,
+        input_size=(input_size[0], input_size[1]),
         confidence_threshold=config.get("confidence_threshold", 0.25),
         iou_threshold=config.get("iou_threshold", 0.45),
     )
@@ -379,17 +448,21 @@ def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("class-names must not contain duplicates")
 
     image_rgb = _read_rgb_image(args.image)
-    segmenter = create_food_segmenter(
-        {
-            "model_path": args.yolo_model,
-            "class_names": class_names,
-            "model_url": args.yolo_model_url,
-            "model_sha256": args.yolo_model_sha256,
-            "model_pt_path": args.yolo_model_pt,
-            "model_pt_url": args.yolo_model_pt_url,
-            "model_pt_sha256": args.yolo_model_pt_sha256,
-            "class_aliases": class_aliases,
-        }
+    yolo_config = {
+        "model_path": args.yolo_model,
+        "class_names": class_names,
+        "model_url": args.yolo_model_url,
+        "model_sha256": args.yolo_model_sha256,
+        "model_pt_path": args.yolo_model_pt,
+        "model_pt_url": args.yolo_model_pt_url,
+        "model_pt_sha256": args.yolo_model_pt_sha256,
+    }
+    segmentation_engine = create_yolo_segmentation_engine(yolo_config)
+    segmenter = FoodSegmenter(
+        None,
+        class_names,
+        class_aliases=class_aliases,
+        engine=segmentation_engine,
     )
     depth_estimator = create_depth_estimator(
         {
@@ -402,15 +475,15 @@ def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
             "external_data_sha256": args.depth_external_data_sha256,
         }
     )
-    obstacle_detector = create_obstacle_detector(
-        {
-            "model_path": args.obstacle_model,
-            "model_url": args.obstacle_model_url,
-            "model_sha256": args.obstacle_model_sha256,
-            "model_pt_path": args.obstacle_model_pt,
-            "model_pt_url": args.obstacle_model_pt_url,
-            "model_pt_sha256": args.obstacle_model_pt_sha256,
-        }
+    obstacle_detector = YoloObstacleDetector(
+        None,
+        class_names,
+        obstacle_class_names=[
+            name
+            for name in class_names
+            if class_aliases is not None and name not in class_aliases
+        ],
+        engine=segmentation_engine,
     )
     result = run_pipeline(
         image_rgb,
@@ -418,6 +491,7 @@ def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
         segmenter,
         depth_estimator,
         obstacle_detector=obstacle_detector,
+        segmentation_engine=segmentation_engine,
     )
     return pipeline_result_to_dict(result)
 
@@ -457,18 +531,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             import uvicorn
 
             def create_components() -> ServerComponents:
+                yolo_config = {
+                    "model_path": args.yolo_model,
+                    "class_names": class_names,
+                    "model_url": args.yolo_model_url,
+                    "model_sha256": args.yolo_model_sha256,
+                    "model_pt_path": args.yolo_model_pt,
+                    "model_pt_url": args.yolo_model_pt_url,
+                    "model_pt_sha256": args.yolo_model_pt_sha256,
+                }
+                segmentation_engine = create_yolo_segmentation_engine(yolo_config)
                 return ServerComponents(
-                    create_food_segmenter(
-                        {
-                            "model_path": args.yolo_model,
-                            "class_names": class_names,
-                            "model_url": args.yolo_model_url,
-                            "model_sha256": args.yolo_model_sha256,
-                            "model_pt_path": args.yolo_model_pt,
-                            "model_pt_url": args.yolo_model_pt_url,
-                            "model_pt_sha256": args.yolo_model_pt_sha256,
-                            "class_aliases": class_aliases,
-                        }
+                    FoodSegmenter(
+                        None,
+                        class_names,
+                        class_aliases=class_aliases,
+                        engine=segmentation_engine,
                     ),
                     create_depth_estimator(
                         {
@@ -482,16 +560,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "external_data_sha256": args.depth_external_data_sha256,
                         }
                     ),
-                    create_obstacle_detector(
-                        {
-                            "model_path": args.obstacle_model,
-                            "model_url": args.obstacle_model_url,
-                            "model_sha256": args.obstacle_model_sha256,
-                            "model_pt_path": args.obstacle_model_pt,
-                            "model_pt_url": args.obstacle_model_pt_url,
-                            "model_pt_sha256": args.obstacle_model_pt_sha256,
-                        }
+                    YoloObstacleDetector(
+                        None,
+                        class_names,
+                        obstacle_class_names=[
+                            name
+                            for name in class_names
+                            if class_aliases is not None and name not in class_aliases
+                        ],
+                        engine=segmentation_engine,
                     ),
+                    segmentation_engine,
                 )
 
             uvicorn.run(

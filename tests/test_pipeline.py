@@ -4,8 +4,10 @@ import cv2
 import numpy as np
 import pytest
 
-from food_segmentation import FoodDetection
+from food_segmentation import FoodDetection, FoodSegmenter
 from pipeline import PipelineError, run_pipeline
+from turntable_obstacle import YoloObstacleDetector
+from yolo_segmentation import YoloDetection, YoloSegmentationResult
 
 
 class FakeSegmenter:
@@ -36,6 +38,16 @@ class FakeObstacleDetector:
     def predict(self, image: np.ndarray) -> np.ndarray:
         self.image = image
         return self.mask
+
+
+class FakeSegmentationEngine:
+    def __init__(self, result: YoloSegmentationResult) -> None:
+        self.result = result
+        self.calls = 0
+
+    def predict(self, image: np.ndarray) -> YoloSegmentationResult:
+        self.calls += 1
+        return self.result
 
 
 def make_turntable_image() -> np.ndarray:
@@ -76,6 +88,59 @@ def test_run_pipeline_connects_all_stages_and_keeps_rgb_contract() -> None:
     assert segmenter.image is not None
     assert tuple(segmenter.image[0, 0]) == (30, 20, 10)
     assert estimator.image is image_rgb
+
+
+def test_run_pipeline_shares_one_yolo_inference_between_selectors() -> None:
+    image_rgb = make_turntable_image()
+    image_rgb = np.repeat(image_rgb[:, :, None], 3, axis=2)
+    food_mask = make_detection().mask
+    obstacle_mask = np.zeros((120, 120), dtype=bool)
+    obstacle_mask[10:15, 10:15] = True
+    engine = FakeSegmentationEngine(
+        YoloSegmentationResult(
+            detections=(
+                YoloDetection(
+                    mask=food_mask,
+                    class_name="rice",
+                    confidence=0.9,
+                    box=np.array([50, 30, 71, 61], dtype=np.float32),
+                ),
+                YoloDetection(
+                    mask=obstacle_mask,
+                    class_name="obstacle",
+                    confidence=0.8,
+                    box=np.array([10, 10, 15, 15], dtype=np.float32),
+                ),
+            ),
+            image_shape=image_rgb.shape[:2],
+        )
+    )
+    food_segmenter = FoodSegmenter(
+        None,
+        ["rice", "obstacle"],
+        class_aliases={"rice": "rice"},
+        engine=engine,
+    )
+    obstacle_detector = YoloObstacleDetector(
+        None,
+        ["rice", "obstacle"],
+        obstacle_class_names=["obstacle"],
+        engine=engine,
+    )
+    depth = np.full((120, 120), 10.0)
+    depth[30, 60] = 1.0
+
+    result = run_pipeline(
+        image_rgb,
+        20.0,
+        food_segmenter,
+        FakeDepthEstimator(depth),
+        obstacle_detector=obstacle_detector,
+        segmentation_engine=engine,
+    )
+
+    assert engine.calls == 1
+    assert result.detection.class_id == "rice"
 
 
 def test_run_pipeline_can_detect_turntable_from_image_without_mask() -> None:
