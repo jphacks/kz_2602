@@ -77,12 +77,35 @@
 
 * [uv](https://docs.astral.sh/uv/)
 * [git](https://git-scm.com/)
+* [Arduino IDE](https://www.arduino.cc/en/software)（M5Stack AtomS3R CAMのプログラムを書き込むため）
+
+### 手順
 
 ```bash
 # このリポジトリをクローンして、uv syncを実行する。
 git clone https://github.com/jphacks/kz_2602.git
 cd kz_2602
 uv sync
+# APIサーバーを起動する。
+uv run python src/main.py \
+  --serve \
+  --yolo-model path/to/food.onnx \
+  --class-names rice meat vegetable bread \
+  --depth-model models/depth-anything-v2-small.onnx \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+Arduino IDEを使って、`hardware/renpin_camera.ino` をM5Stack AtomS3R CAMに書き込みます。Wi-FiのSSIDとパスワードは、`hardware/renpin_camera.ino` の先頭で設定してください。
+
+AtomS3R CAMの電源を入れ、Wi-Fiに接続されることを確認します。接続されると、LCDにIPアドレスが表示されます。
+
+```bash
+# レンピンから画像を取得して、APIサーバーに送信する。
+python renping_bridge.py \
+  --node-ip <LCDに表示されたIPアドレス> \
+  --server http://127.0.0.1:8000/ \
+  --diameter-cm 25
 ```
 
 詳細は[docs/](./docs/)を参照してください。
