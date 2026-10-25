@@ -59,6 +59,7 @@ def run_pipeline(
     depth_estimator: DepthEstimatorProtocol,
     *,
     obstacle_detector: ObstacleMaskDetectorProtocol | None = None,
+    initial_temperature_c: float = 20.0,
 ) -> PipelineResult:
     """Run turntable calibration, food detection, measurement, and heating.
 
@@ -107,7 +108,11 @@ def run_pipeline(
             calibration,
             material.density_g_per_cm3,
         )
-        heating = estimate_heating_parameters(detection.class_id, measurement)
+        heating = estimate_heating_parameters(
+            detection.class_id,
+            measurement,
+            initial_temperature_c=initial_temperature_c,
+        )
     except PipelineError:
         raise
     except (AttributeError, TypeError, ValueError) as error:

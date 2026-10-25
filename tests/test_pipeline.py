@@ -119,3 +119,32 @@ def test_run_pipeline_rejects_depth_shape_mismatch() -> None:
             FakeDepthEstimator(np.zeros((10, 10))),
             obstacle_detector=FakeObstacleDetector(np.zeros((120, 120), dtype=bool)),
         )
+
+
+def test_run_pipeline_passes_initial_temperature_to_heating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, float] = {}
+
+    def fake_heating(
+        class_id: str,
+        measurement: object,
+        *,
+        initial_temperature_c: float,
+    ) -> object:
+        captured["initial_temperature_c"] = initial_temperature_c
+        return object()
+
+    monkeypatch.setattr("pipeline.estimate_heating_parameters", fake_heating)
+    image_rgb = make_turntable_image()
+    image_rgb = np.repeat(image_rgb[:, :, None], 3, axis=2)
+    result = run_pipeline(
+        image_rgb,
+        20.0,
+        FakeSegmenter(make_detection()),
+        FakeDepthEstimator(np.zeros((120, 120))),
+        initial_temperature_c=5.0,
+    )
+
+    assert captured["initial_temperature_c"] == 5.0
+    assert result.heating is not None

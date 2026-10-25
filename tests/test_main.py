@@ -5,6 +5,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
+import server
+import uvicorn
 
 import main
 
@@ -190,3 +192,54 @@ def test_cli_rejects_unsupported_model_classes(
 
     assert exit_code == 2
     assert "unsupported: person" in capsys.readouterr().err
+
+
+def test_cli_can_start_http_server_without_an_input_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(main, "create_food_segmenter", lambda config: config)
+    monkeypatch.setattr(main, "create_depth_estimator", lambda config: config)
+    monkeypatch.setattr(main, "create_obstacle_detector", lambda config: config)
+
+    def fake_create_app(factory: object) -> object:
+        captured["components"] = factory()
+        return object()
+
+    monkeypatch.setattr(server, "create_app", fake_create_app)
+    monkeypatch.setattr(
+        uvicorn,
+        "run",
+        lambda app, **kwargs: captured.update({"app": app, "kwargs": kwargs}),
+    )
+
+    exit_code = main.main(
+        [
+            "--serve",
+            "--yolo-model",
+            "food.onnx",
+            "--class-names",
+            "rice",
+            "--depth-model",
+            "depth.onnx",
+            "--obstacle-model",
+            "obstacle.onnx",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9000",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["kwargs"] == {
+        "host": "0.0.0.0",
+        "port": 9000,
+        "workers": 1,
+    }
+    components = captured["components"]
+    assert components.food_segmenter["model_path"] == "food.onnx"
+    assert components.food_segmenter["class_names"] == ["rice"]
+    assert components.depth_estimator["model_path"] == "depth.onnx"
+    assert components.obstacle_detector["model_path"] == "obstacle.onnx"

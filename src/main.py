@@ -296,10 +296,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run food measurement and heating estimation on one image."
     )
-    parser.add_argument("--image", required=True, help="Input image path")
-    parser.add_argument(
-        "--diameter-cm", required=True, type=float, help="Turntable diameter in cm"
-    )
+    parser.add_argument("--image", help="Input image path")
+    parser.add_argument("--diameter-cm", type=float, help="Turntable diameter in cm")
     parser.add_argument(
         "--yolo-model", required=True, help="Food-trained YOLO segmentation ONNX path"
     )
@@ -343,6 +341,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--obstacle-model-pt-url")
     parser.add_argument("--obstacle-model-pt-sha256")
     parser.add_argument("--output", help="Optional JSON output path; stdout by default")
+    parser.add_argument(
+        "--serve", action="store_true", help="Run an HTTP server instead of the CLI"
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP server host")
+    parser.add_argument("--port", type=int, default=8000, help="HTTP server port")
     return parser
 
 
@@ -354,6 +357,8 @@ def _read_rgb_image(image_path: str) -> np.ndarray:
 
 
 def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
+    if args.image is None or args.diameter_cm is None:
+        raise ValueError("--image and --diameter-cm are required")
     if args.coco:
         if args.class_names:
             raise ValueError("--coco cannot be combined with --class-names")
@@ -422,6 +427,77 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_argument_parser()
     args = parser.parse_args(argv)
     try:
+        if args.serve:
+            if args.image is not None or args.output is not None:
+                raise ValueError("--image and --output cannot be used with --serve")
+            if args.port <= 0 or args.port > 65535:
+                raise ValueError("--port must be between 1 and 65535")
+            if args.diameter_cm is not None:
+                raise ValueError("--diameter-cm cannot be used with --serve")
+            if args.coco:
+                if args.class_names:
+                    raise ValueError("--coco cannot be combined with --class-names")
+                class_names = list(COCO_CLASS_NAMES)
+                class_aliases = COCO_FOOD_CLASS_ALIASES
+            else:
+                if not args.class_names:
+                    raise ValueError("--class-names is required unless --coco is used")
+                class_names = list(args.class_names)
+                class_aliases = None
+                unsupported_classes = sorted(set(class_names) - SUPPORTED_FOOD_CLASSES)
+                if unsupported_classes:
+                    raise ValueError(
+                        "class-names must use supported food classes only; "
+                        f"unsupported: {', '.join(unsupported_classes)}"
+                    )
+                if len(set(class_names)) != len(class_names):
+                    raise ValueError("class-names must not contain duplicates")
+
+            from server import ServerComponents, create_app
+            import uvicorn
+
+            def create_components() -> ServerComponents:
+                return ServerComponents(
+                    create_food_segmenter(
+                        {
+                            "model_path": args.yolo_model,
+                            "class_names": class_names,
+                            "model_url": args.yolo_model_url,
+                            "model_sha256": args.yolo_model_sha256,
+                            "model_pt_path": args.yolo_model_pt,
+                            "model_pt_url": args.yolo_model_pt_url,
+                            "model_pt_sha256": args.yolo_model_pt_sha256,
+                            "class_aliases": class_aliases,
+                        }
+                    ),
+                    create_depth_estimator(
+                        {
+                            "model_path": args.depth_model,
+                            "model_url": args.depth_model_url
+                            or DEFAULT_DEPTH_MODEL_URL,
+                            "model_sha256": args.depth_model_sha256,
+                            "external_data_path": args.depth_external_data,
+                            "external_data_url": args.depth_external_data_url
+                            or DEFAULT_DEPTH_EXTERNAL_DATA_URL,
+                            "external_data_sha256": args.depth_external_data_sha256,
+                        }
+                    ),
+                    create_obstacle_detector(
+                        {
+                            "model_path": args.obstacle_model,
+                            "model_url": args.obstacle_model_url,
+                            "model_sha256": args.obstacle_model_sha256,
+                            "model_pt_path": args.obstacle_model_pt,
+                            "model_pt_url": args.obstacle_model_pt_url,
+                            "model_pt_sha256": args.obstacle_model_pt_sha256,
+                        }
+                    ),
+                )
+
+            uvicorn.run(
+                create_app(create_components), host=args.host, port=args.port, workers=1
+            )
+            return 0
         output = json.dumps(_run_cli(args), ensure_ascii=False, indent=2)
         if args.output:
             Path(args.output).write_text(output + "\n", encoding="utf-8")

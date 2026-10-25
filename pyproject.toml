@@ -4,14 +4,17 @@ version = "0.1.0"
 authors = [{ name = "toyama170402", email = "toyamasoujinn@gmail.com" }]
 requires-python = ">=3.13"
 dependencies = [
+  "fastapi>=0.115",
   "numpy>=2.2",
   "onnxruntime>=1.20",
   "opencv-python-headless>=4.11",
+  "python-multipart>=0.0.20",
   "ultralytics>=8.4.185",
+  "uvicorn>=0.34",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.3"]
+dev = ["httpx>=0.28", "pytest>=8.3"]
 
 
 [build-system]
