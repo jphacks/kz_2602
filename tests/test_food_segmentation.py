@@ -90,6 +90,17 @@ def test_predict_rejects_multiple_food_detections() -> None:
         segmenter.predict(np.zeros((20, 20, 3), dtype=np.uint8))
 
 
+def test_predict_any_object_selects_highest_confidence_and_uses_unknown_class() -> None:
+    segmenter, _ = make_segmenter(
+        segmentation_outputs(second_detection=True), allow_any_detection=True
+    )
+
+    detection = segmenter.predict(np.zeros((20, 20, 3), dtype=np.uint8))
+
+    assert detection.class_id == "unknown"
+    assert detection.confidence == pytest.approx(0.9)
+
+
 def test_predict_returns_no_detection_below_threshold() -> None:
     segmenter, _ = make_segmenter(
         segmentation_outputs(class_score=0.2), confidence_threshold=0.5

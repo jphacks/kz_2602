@@ -381,6 +381,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Use the standard COCO 80-class names and food class mapping",
     )
     parser.add_argument(
+        "--any-object",
+        action="store_true",
+        help="Measure the highest-confidence detected object, regardless of class",
+    )
+    parser.add_argument(
         "--yolo-model-url", help="URL used when --yolo-model does not exist"
     )
     parser.add_argument("--yolo-model-sha256")
@@ -451,6 +456,7 @@ def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
     yolo_config = {
         "model_path": args.yolo_model,
         "class_names": class_names,
+        "confidence_threshold": 0.10 if args.any_object else 0.25,
         "model_url": args.yolo_model_url,
         "model_sha256": args.yolo_model_sha256,
         "model_pt_path": args.yolo_model_pt,
@@ -462,6 +468,7 @@ def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
         None,
         class_names,
         class_aliases=class_aliases,
+        allow_any_detection=args.any_object,
         engine=segmentation_engine,
     )
     depth_estimator = create_depth_estimator(
@@ -534,6 +541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 yolo_config = {
                     "model_path": args.yolo_model,
                     "class_names": class_names,
+                    "confidence_threshold": 0.10 if args.any_object else 0.25,
                     "model_url": args.yolo_model_url,
                     "model_sha256": args.yolo_model_sha256,
                     "model_pt_path": args.yolo_model_pt,
@@ -546,6 +554,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         None,
                         class_names,
                         class_aliases=class_aliases,
+                        allow_any_detection=args.any_object,
                         engine=segmentation_engine,
                     ),
                     create_depth_estimator(

@@ -21,6 +21,7 @@ uv run python src/main.py \
   --serve \
   --yolo-model path/to/food.onnx \
   --class-names rice meat vegetable bread \
+  --any-object \
   --depth-model models/depth-anything-v2-small.onnx \
   --host 127.0.0.1 \
   --port 8000

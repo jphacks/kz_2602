@@ -49,6 +49,7 @@ _FOOD_PROPERTIES = {
     "vegetable": FoodMaterialProperties("vegetable", 0.95, 60.0, 15.0, 0.25, 3.8),
     "bread": FoodMaterialProperties("bread", 0.35, 5.0, 1.0, 0.20, 1.8),
     "bowl": FoodMaterialProperties("bowl", 1.20, 4.0, 0.20, 0.05, 1.00),
+    "unknown": FoodMaterialProperties("unknown", 1.00, 10.0, 1.0, 0.10, 2.0),
 }
 
 
