@@ -42,6 +42,7 @@ class FoodSegmenter:
         confidence_threshold: float = 0.25,
         iou_threshold: float = 0.45,
         class_aliases: Mapping[str, str] | None = None,
+        allow_any_detection: bool = False,
         session: Any | None = None,
         engine: YoloSegmentationEngine | None = None,
     ) -> None:
@@ -61,6 +62,7 @@ class FoodSegmenter:
         self._confidence_threshold = float(confidence_threshold)
         self._iou_threshold = float(iou_threshold)
         self._class_aliases = dict(class_aliases or {})
+        self._allow_any_detection = allow_any_detection
         if any(
             not source or not target for source, target in self._class_aliases.items()
         ):
@@ -90,23 +92,36 @@ class FoodSegmenter:
 
     def select(self, result: YoloSegmentationResult) -> FoodDetection:
         """Select and classify the only configured food detection."""
-        allowed_names = set(self._class_aliases) or set(self._class_names)
-        detections = [
-            detection
-            for detection in result.detections
-            if detection.class_name in allowed_names
-        ]
-        if len(detections) != 1:
+        if self._allow_any_detection:
+            detections = list(result.detections)
+        else:
+            allowed_names = set(self._class_aliases) or set(self._class_names)
+            detections = [
+                detection
+                for detection in result.detections
+                if detection.class_name in allowed_names
+            ]
+        if self._allow_any_detection and not detections:
+            raise FoodSegmentationError(
+                "expected at least one food detection, but found 0"
+            )
+        if not self._allow_any_detection and len(detections) != 1:
             raise FoodSegmentationError(
                 "expected exactly one food detection, " f"but found {len(detections)}"
             )
-        detection = detections[0]
+        detection = (
+            max(detections, key=lambda candidate: candidate.confidence)
+            if self._allow_any_detection
+            else detections[0]
+        )
         if not detection.mask.any():
             raise FoodSegmentationError("the decoded food mask is empty")
         return FoodDetection(
             mask=detection.mask,
-            class_id=self._class_aliases.get(
-                detection.class_name, detection.class_name
+            class_id=(
+                self._class_aliases.get(detection.class_name, "unknown")
+                if self._allow_any_detection
+                else self._class_aliases.get(detection.class_name, detection.class_name)
             ),
             confidence=detection.confidence,
             y_base_px=int(np.flatnonzero(detection.mask.any(axis=1)).max()),
