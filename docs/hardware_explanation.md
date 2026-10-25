@@ -19,4 +19,10 @@
 
 ![画面遷移図](./img/renpin_explanationB.jpg)
 
+### 実際にモニターに表示される画面
 
+#### ①物体を撮影する際の画面
+![実際に出力された画面](./img/renpin_movezoom.jpg)
+
+#### ②推定結果を表示している画面
+![実際に出力された画面](./img/renpin_verify.jpg)
