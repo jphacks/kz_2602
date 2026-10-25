@@ -84,3 +84,5 @@ uv sync
 ```
 
 詳細は[docs/](./docs/)を参照してください。
+
+- [ハードウェア説明書](./docs/hardware_explanation.md)
