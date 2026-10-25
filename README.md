@@ -36,3 +36,19 @@
 #### ハッカソンで開発した独自機能・技術
 * 独自で開発したものの内容をこちらに記載してください
 * 特に力を入れた部分をファイルリンク、またはcommit_idを記載してください。
+
+## 起動方法
+
+### 前提条件
+
+以下がインストールされていること。
+
+* [uv](https://docs.astral.sh/uv/)
+* [git](https://git-scm.com/)
+
+```bash
+# このリポジトリをクローンして、uv syncを実行する。
+git clone https://github.com/jphacks/kz_2602.git
+cd kz_2602
+uv sync
+```
