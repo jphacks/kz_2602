@@ -1,6 +1,6 @@
-# レンピタ（れんぴた）
+# レンピン（れんぴん）
 
-![レンピタ](./docs/img/hero-image.jpg)
+![レンピン](./docs/img/hero-image.jpg)
 
 ## 製品概要
 
@@ -110,4 +110,7 @@ python renping_bridge.py \
 
 詳細は[docs/](./docs/)を参照してください。
 
-- [ハードウェア説明書](./docs/hardware_explanation.md)
+* [全体のつながり概要](./docs/system_connection.md)
+* [ハードウェア説明書](./docs/hardware_explanation.md)
+* [API仕様書](./docs/api.md)
+* [推論エンジン設計書](./docs/design.md)
